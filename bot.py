@@ -13,8 +13,9 @@ DEEPSEEK_KEY = os.environ["DEEPSEEK_API_KEY"]
 TG_TOKEN = os.environ["TG_BOT_TOKEN"]
 TG_PROXY = os.environ.get("TG_PROXY", "")
 PORT = int(os.environ.get("PORT", "10000"))
-# Railway / Render 等云平台自动提供的公网 URL
-PUBLIC_URL = os.environ.get("RAILWAY_PUBLIC_DOMAIN") or os.environ.get("RENDER_EXTERNAL_URL", "")
+# 云平台自动检测
+IS_CLOUD = os.environ.get("RENDER") or os.environ.get("RAILWAY_PUBLIC_DOMAIN")
+SERVICE_NAME = os.environ.get("RENDER_SERVICE_NAME", "")
 
 # DeepSeek 客户端
 client = OpenAI(api_key=DEEPSEEK_KEY, base_url="https://api.deepseek.com/v1")
@@ -96,8 +97,11 @@ def main():
     app.add_handler(CommandHandler("reset", reset))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
 
-    if PUBLIC_URL:
-        webhook_url = f"https://{PUBLIC_URL}/telegram"
+    if IS_CLOUD:
+        if SERVICE_NAME:
+            webhook_url = f"https://{SERVICE_NAME}.onrender.com/telegram"
+        else:
+            webhook_url = f"https://{os.environ['RAILWAY_PUBLIC_DOMAIN']}/telegram"
         app.run_webhook(listen="0.0.0.0", port=PORT, webhook_url=webhook_url)
         print(f"Webhook 模式已启动: {webhook_url}")
     else:
