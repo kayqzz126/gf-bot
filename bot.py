@@ -89,8 +89,12 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply = resp.choices[0].message.content
         add_message(chat_id, "assistant", reply)
         print(f"[艾力回复] {reply}")
-        # 模拟打字延迟，2-5 秒
-        await asyncio.sleep(random.uniform(2, 5))
+        # 模拟思考+打字：大部分时候 1-3 秒，偶尔 5-10 秒
+        delay = random.choices(
+            [random.uniform(1, 3), random.uniform(5, 10)],
+            weights=[0.8, 0.2]
+        )[0]
+        await asyncio.sleep(delay)
         await update.message.reply_text(reply)
     except Exception:
         traceback.print_exc()
