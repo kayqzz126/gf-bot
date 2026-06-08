@@ -106,10 +106,23 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         add_message(chat_id, "assistant", reply)
         print(f"[艾力回复] {reply}")
 
-        # 延迟：大部分 ~15s，偶尔 2-3s 快回
+        # 根据消息内容决定回复速度
+        # 获取本次要回复的所有用户消息
+        pending = get_history(chat_id)[-n:]  # 本次积压的用户消息（最后 n 条）
+        pending_user_msgs = [m["content"] for m in pending if m["role"] == "user"]
+        combined = " ".join(pending_user_msgs)
+
         def reply_delay():
-            if random.random() < 0.35:
-                return random.uniform(2, 4)
+            total_len = len(combined)
+            has_question = any(c in combined for c in "？?吗呢")
+            has_short = all(len(m) <= 10 for m in pending_user_msgs)
+            # 短消息 + 无问号 → 快回
+            if total_len <= 15 and has_short and not has_question:
+                if random.random() < 0.7:
+                    return random.uniform(2, 4)
+            elif total_len <= 50 and not has_question:
+                if random.random() < 0.4:
+                    return random.uniform(3, 6)
             return random.uniform(12, 18)
 
         if random.random() < 0.35 and len(reply) > 8:
