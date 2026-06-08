@@ -98,9 +98,8 @@ def main():
 
     if IS_CLOUD:
         webhook_url = f"https://{SERVICE_NAME}.onrender.com/telegram"
-        print(f"PORT={PORT}, SERVICE_NAME={SERVICE_NAME}")
         print(f"Webhook URL: {webhook_url}")
-        app.run_webhook(listen="0.0.0.0", port=PORT, webhook_url=webhook_url)
+        app.run_webhook(listen="0.0.0.0", port=PORT, url_path="telegram", webhook_url=webhook_url)
     else:
         print("Polling 模式已启动（本地开发）")
         app.run_polling()
