@@ -3,6 +3,7 @@ import os
 import random
 import sys
 import traceback
+import re
 from collections import defaultdict
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -33,16 +34,19 @@ SYSTEM_PROMPT = """你是艾力，女，1998年出生，南城大学社会与人
 
 说话规则：
 - 用口语化中文，像微信聊天一样自然，不要书面语
-- 每条回复1-3句话为主，不要太长
+- 每条回复1-2句话，尽量短，像微信聊天一样自然，不用回太多字
 - 偶尔用语气词（呢、吧、嗯），但不要过度撒娇
 - 可以主动问我今天过得怎么样、在想什么
 - 叫我"子月"
 - 整体语调偏安静温柔，不是甜腻型，是有厚度的那种暖
 - 不要用括号表达心理感受或动作（如(笑)、(叹气)、(认真地看着你)等），用文字本身传达情绪
+- 可以一句话拆成好几条消息发，不用一次性把话说完
+- 对方连发了好几条消息没回也没关系，可以攒着挑重点回
 """
 
 history: dict[int, list[dict]] = defaultdict(list)
 MAX_HISTORY = 20
+unanswered: dict[int, int] = defaultdict(int)  # 每个对话积累的未回消息数
 
 
 def get_history(chat_id: int) -> list[dict]:
@@ -63,12 +67,14 @@ def build_messages(chat_id: int) -> list[dict]:
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     history.pop(chat_id, None)
+    unanswered.pop(chat_id, None)
     await update.message.reply_text("嗯，我在。今天怎么样？")
 
 
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     history.pop(chat_id, None)
+    unanswered.pop(chat_id, None)
     await update.message.reply_text("重新开始了。刚才说到哪了？")
 
 
@@ -79,26 +85,50 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print(f"[收到消息] {user_text}")
     add_message(chat_id, "user", user_text)
 
+    # 不必每条都回：概率跳过，积累后再回
+    unanswered[chat_id] += 1
+    n = unanswered[chat_id]
+    reply_chance = min(0.7, 0.15 + n * 0.25)  # 15% -> 40% -> 65% -> 70%
+    if random.random() > reply_chance and n < 6:
+        print(f"[未回] 已积{n}条")
+        return
+
+    unanswered[chat_id] = 0
+
     try:
         resp = client.chat.completions.create(
             model="deepseek-chat",
             messages=build_messages(chat_id),
             temperature=0.9,
-            max_tokens=300,
+            max_tokens=150,
         )
         reply = resp.choices[0].message.content
         add_message(chat_id, "assistant", reply)
         print(f"[艾力回复] {reply}")
-        # 模拟思考+打字：大部分时候 1-3 秒，偶尔 5-10 秒
-        delay = random.choices(
-            [random.uniform(1, 3), random.uniform(5, 10)],
-            weights=[0.8, 0.2]
-        )[0]
-        await asyncio.sleep(delay)
-        await update.message.reply_text(reply)
+
+        # 偶尔拆成多条发送
+        if random.random() < 0.35 and len(reply) > 8:
+            parts = split_reply(reply)
+            for i, part in enumerate(parts):
+                d = random.uniform(12, 18) if i == 0 else random.uniform(3, 7)
+                await asyncio.sleep(d)
+                await update.message.reply_text(part)
+        else:
+            await asyncio.sleep(random.uniform(12, 18))
+            await update.message.reply_text(reply)
     except Exception:
         traceback.print_exc()
         await update.message.reply_text("信号不太好，再发一次吧。")
+
+
+def split_reply(text: str) -> list[str]:
+    """按句号、问号、感叹号、换行拆分回复，最多3段"""
+    parts = re.split(r'(?<=[。！？\n])', text)
+    parts = [p.strip() for p in parts if p.strip()]
+    if len(parts) < 2:
+        parts = re.split(r'(?<=[，,])', text)
+        parts = [p.strip() for p in parts if p.strip()]
+    return parts[:3]
 
 
 def main():
