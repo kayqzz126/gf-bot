@@ -12,9 +12,8 @@ load_dotenv()
 DEEPSEEK_KEY = os.environ["DEEPSEEK_API_KEY"]
 TG_TOKEN = os.environ["TG_BOT_TOKEN"]
 TG_PROXY = os.environ.get("TG_PROXY", "")
-PORT = int(os.environ.get("PORT", "10000"))
-# 云平台自动检测
-IS_CLOUD = os.environ.get("RENDER") or os.environ.get("RAILWAY_PUBLIC_DOMAIN")
+PORT = int(os.environ.get("PORT", "0"))
+IS_CLOUD = bool(PORT and "RENDER_SERVICE_NAME" in os.environ)
 SERVICE_NAME = os.environ.get("RENDER_SERVICE_NAME", "")
 
 # DeepSeek 客户端
@@ -98,12 +97,10 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
 
     if IS_CLOUD:
-        if SERVICE_NAME:
-            webhook_url = f"https://{SERVICE_NAME}.onrender.com/telegram"
-        else:
-            webhook_url = f"https://{os.environ['RAILWAY_PUBLIC_DOMAIN']}/telegram"
+        webhook_url = f"https://{SERVICE_NAME}.onrender.com/telegram"
+        print(f"PORT={PORT}, SERVICE_NAME={SERVICE_NAME}")
+        print(f"Webhook URL: {webhook_url}")
         app.run_webhook(listen="0.0.0.0", port=PORT, webhook_url=webhook_url)
-        print(f"Webhook 模式已启动: {webhook_url}")
     else:
         print("Polling 模式已启动（本地开发）")
         app.run_polling()
