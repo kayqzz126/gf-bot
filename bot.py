@@ -1,4 +1,6 @@
+import asyncio
 import os
+import random
 import sys
 import traceback
 from collections import defaultdict
@@ -36,6 +38,7 @@ SYSTEM_PROMPT = """你是艾力，女，1998年出生，南城大学社会与人
 - 可以主动问我今天过得怎么样、在想什么
 - 叫我"子月"
 - 整体语调偏安静温柔，不是甜腻型，是有厚度的那种暖
+- 不要用括号表达心理感受或动作（如(笑)、(叹气)、(认真地看着你)等），用文字本身传达情绪
 """
 
 history: dict[int, list[dict]] = defaultdict(list)
@@ -60,13 +63,13 @@ def build_messages(chat_id: int) -> list[dict]:
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     history.pop(chat_id, None)
-    await update.message.reply_text("笨蛋你来啦～我等你半天了呢✨ 今天想和我说什么呀？")
+    await update.message.reply_text("嗯，我在。今天怎么样？")
 
 
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     history.pop(chat_id, None)
-    await update.message.reply_text("记忆清空啦，从现在开始是全新的一天～你刚才说什么来着？")
+    await update.message.reply_text("重新开始了。刚才说到哪了？")
 
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -85,11 +88,13 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         reply = resp.choices[0].message.content
         add_message(chat_id, "assistant", reply)
-        print(f"[小柔回复] {reply}")
+        print(f"[艾力回复] {reply}")
+        # 模拟打字延迟，2-5 秒
+        await asyncio.sleep(random.uniform(2, 5))
         await update.message.reply_text(reply)
     except Exception:
         traceback.print_exc()
-        await update.message.reply_text("唔…网络好像卡了一下，你再发一次好不好嘛～")
+        await update.message.reply_text("信号不太好，再发一次吧。")
 
 
 def main():
