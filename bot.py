@@ -106,15 +106,20 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         add_message(chat_id, "assistant", reply)
         print(f"[艾力回复] {reply}")
 
-        # 偶尔拆成多条发送
+        # 延迟：大部分 ~15s，偶尔 2-3s 快回
+        def reply_delay():
+            if random.random() < 0.35:
+                return random.uniform(2, 4)
+            return random.uniform(12, 18)
+
         if random.random() < 0.35 and len(reply) > 8:
             parts = split_reply(reply)
             for i, part in enumerate(parts):
-                d = random.uniform(12, 18) if i == 0 else random.uniform(3, 7)
+                d = reply_delay() if i == 0 else random.uniform(2, 5)
                 await asyncio.sleep(d)
                 await update.message.reply_text(part)
         else:
-            await asyncio.sleep(random.uniform(12, 18))
+            await asyncio.sleep(reply_delay())
             await update.message.reply_text(reply)
     except Exception:
         traceback.print_exc()
