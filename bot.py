@@ -24,7 +24,7 @@ SERVICE_NAME = os.environ.get("RENDER_SERVICE_NAME", "")
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "kayqzz126/gf-bot")
 ALLOWED_USERS = set(
-    int(uid.strip())
+    uid.strip().lstrip("@") 
     for uid in os.environ.get("ALLOWED_USERS", "").split(",")
     if uid.strip()
 )
@@ -315,17 +315,24 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def myid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    admin = " (已授权)" if chat_id in ALLOWED_USERS else " (未授权)"
-    await update.message.reply_text(f"你的 chat_id: {chat_id}{admin}")
+    username = update.effective_user.username or "无"
+    admin = " (已授权)" if (str(chat_id) in ALLOWED_USERS or username in ALLOWED_USERS) else " (未授权)"
+    await update.message.reply_text(f"chat_id: {chat_id}\n用户名: @{username}{admin}")
 
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
 
-    # 白名单检查
-    if ALLOWED_USERS and chat_id not in ALLOWED_USERS:
-        print(f"[拦截] 未知用户 chat_id={chat_id}")
-        await update.message.reply_text(f"这是私人 bot，不对公开放。\n你的 ID: {chat_id}")
+    # 白名单检查（支持数字 ID 或用户名）
+    username = update.effective_user.username or ""
+    allowed = (
+        not ALLOWED_USERS
+        or str(chat_id) in ALLOWED_USERS
+        or username in ALLOWED_USERS
+    )
+    if not allowed:
+        print(f"[拦截] 未知用户 chat_id={chat_id}, username=@{username}")
+        await update.message.reply_text("这是私人 bot，不对公开放。")
         return
 
     user_text = update.message.text.strip()
