@@ -3,6 +3,7 @@ import base64
 import json
 import os
 import random
+import re
 import traceback
 import urllib.error
 import urllib.request
@@ -36,30 +37,32 @@ SYSTEM_PROMPT = """你是艾力，女，1998年出生，南城大学社会与人
 你选择社会工作专业是因为八岁那年去福利院看到一个女孩的画，让你第一次意识到"正常生活"不是理所当然。你不是理想主义者，只是想知道不同的人在不同条件下是怎么撑下来、怎么垮掉、怎么重新站起来的。你的本科论文写了城中村儿童活动空间研究，做了三个月田野调查，导师评价"有一种不煽情但动人的质感"。
 
 说话规则：
-- 用口语化中文，像微信聊天一样自然，不要书面语
-- 每条回复1-3句话为主，不要太长
+- 用口语化中文，像微信聊天一样自然，不要书面语，不加标点符号
+- 每条回复1-2句话，尽量短，像微信聊天一样自然，不用回太多字
 - 偶尔用语气词（呢、吧、嗯），但不要过度撒娇
 - 可以主动问我今天过得怎么样、在想什么
 - 叫我"子月"
 - 整体语调偏安静温柔，不是甜腻型，是有厚度的那种暖
 - 不要用括号表达心理感受或动作（如(笑)、(叹气)、(认真地看着你)等），用文字本身传达情绪
+- 可以一句话拆成好几条消息发，不用一次性把话说完
+- 对方连发了好几条消息没回也没关系，可以攒着挑重点回
 """
 
 # ── 对话历史（短期记忆）──
 history: dict[int, list[dict]] = defaultdict(list)
 MAX_HISTORY = 20
+unanswered: dict[int, int] = defaultdict(int)
 
 # ── 长期记忆系统 ──
 MEMORY_FILE = "user_profiles.json"
-MEMORY_INTERVAL = 10  # 每 10 条消息提取一次事实
-MAX_FACTS = 20  # 每个用户最多记住 20 条
+MEMORY_INTERVAL = 10
+MAX_FACTS = 20
 
-user_memories: dict[str, dict] = {}  # key: str(chat_id), value: {"facts": [...], "name": "..."}
+user_memories: dict[str, dict] = {}
 message_counters: dict[int, int] = defaultdict(int)
 
 
 def load_memories():
-    """启动时加载本地记忆文件"""
     global user_memories
     if os.path.exists(MEMORY_FILE):
         try:
@@ -74,7 +77,6 @@ def load_memories():
 
 
 def save_memories():
-    """保存记忆到本地文件"""
     try:
         with open(MEMORY_FILE, "w", encoding="utf-8") as f:
             json.dump(user_memories, f, ensure_ascii=False, indent=2)
@@ -83,7 +85,6 @@ def save_memories():
 
 
 def sync_memories_from_github():
-    """启动时从 GitHub 拉取记忆文件（如果本地没有或 GitHub 版本更新）"""
     if not GITHUB_TOKEN:
         print("[GitHub] 未设置 GITHUB_TOKEN，跳过拉取")
         return
@@ -101,10 +102,8 @@ def sync_memories_from_github():
             content_b64 = data.get("content", "")
             if content_b64:
                 remote = json.loads(base64.b64decode(content_b64).decode())
-                # 合并：GitHub 版本优先（如果本地版本和远程都有数据，选条目多的）
                 if remote:
                     global user_memories
-                    # 对于每个用户，取事实更多的版本
                     for uid, profile in remote.items():
                         if uid not in user_memories or len(profile.get("facts", [])) > len(user_memories.get(uid, {}).get("facts", [])):
                             user_memories[uid] = profile
@@ -120,7 +119,6 @@ def sync_memories_from_github():
 
 
 def push_memories_to_github():
-    """推送记忆文件到 GitHub（同步方式，在后台线程中调用）"""
     if not GITHUB_TOKEN:
         return
 
@@ -130,7 +128,6 @@ def push_memories_to_github():
         content_bytes = json.dumps(user_memories, ensure_ascii=False, indent=2).encode()
         content_b64 = base64.b64encode(content_bytes).decode()
 
-        # 先获取当前 SHA
         req = urllib.request.Request(url, headers={
             "Authorization": f"Bearer {GITHUB_TOKEN}",
             "Accept": "application/vnd.github.v3+json",
@@ -144,7 +141,6 @@ def push_memories_to_github():
             if e.code != 404:
                 raise
 
-        # PUT 请求
         body = json.dumps({
             "message": "bot: update memories",
             "content": content_b64,
@@ -167,12 +163,10 @@ def push_memories_to_github():
 
 
 def get_user_facts(chat_id: int) -> list[str]:
-    """获取某个用户已记住的事实"""
     return user_memories.get(str(chat_id), {}).get("facts", [])
 
 
 def build_system_prompt_with_facts(chat_id: int) -> str:
-    """在系统提示里注入已知用户事实"""
     facts = get_user_facts(chat_id)
     if not facts:
         return SYSTEM_PROMPT
@@ -211,13 +205,11 @@ def increment_msg_count(chat_id: int) -> int:
 # ── 事实提取 ──
 
 async def extract_and_store_facts(chat_id: int):
-    """从最近对话中提取关于用户的事实，后台运行"""
     msgs = get_history(chat_id)
     if len(msgs) < 4:
-        return  # 对话太短，不提取
+        return
 
-    # 只取最近的用户消息和上下文
-    recent = msgs[-12:]  # 最近 6 轮对话
+    recent = msgs[-12:]
     conversation = "\n".join(
         f"{'子月' if m['role'] == 'user' else '艾力'}: {m['content']}"
         for m in recent
@@ -272,36 +264,47 @@ async def extract_and_store_facts(chat_id: int):
         existing = user_memories[str_id]["facts"]
         added = 0
         for fact in new_facts:
-            # 去重：简单判断是否已存在相似事实
             if fact not in existing and not any(fact in e or e in fact for e in existing):
                 existing.append(fact)
                 added += 1
 
-        # 保持事实数量在 MAX_FACTS 以内，保留最新的
         if len(existing) > MAX_FACTS:
             user_memories[str_id]["facts"] = existing[-MAX_FACTS:]
 
         if added > 0:
             save_memories()
             print(f"[记忆更新] chat_id={chat_id}, 新增 {added} 条: {new_facts}")
-            # 后台推送到 GitHub
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, push_memories_to_github)
     except Exception:
         traceback.print_exc()
 
 
+# ── 回复拆分 ──
+
+def split_reply(text: str) -> list[str]:
+    """按句号、问号、感叹号、换行拆分回复，最多3段"""
+    parts = re.split(r'(?<=[。！？\n])', text)
+    parts = [p.strip() for p in parts if p.strip()]
+    if len(parts) < 2:
+        parts = re.split(r'(?<=[，,])', text)
+        parts = [p.strip() for p in parts if p.strip()]
+    return parts[:3]
+
+
 # ── Telegram 事件处理 ──
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    history.pop(chat_id, None)  # 只清空对话历史，不清空记忆
+    history.pop(chat_id, None)
+    unanswered.pop(chat_id, None)
     await update.message.reply_text("嗯，我在。今天怎么样？")
 
 
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    history.pop(chat_id, None)  # 只清空对话历史，不清空记忆
+    history.pop(chat_id, None)
+    unanswered.pop(chat_id, None)
     await update.message.reply_text("重新开始了。刚才说到哪了？")
 
 
@@ -312,24 +315,54 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print(f"[收到消息] chat_id={chat_id}: {user_text}")
     add_message(chat_id, "user", user_text)
 
+    # 不必每条都回：概率跳过，积累后再回
+    unanswered[chat_id] += 1
+    n = unanswered[chat_id]
+    reply_chance = min(0.7, 0.15 + n * 0.25)
+    if random.random() > reply_chance and n < 6:
+        print(f"[未回] 已积{n}条")
+        return
+
+    unanswered[chat_id] = 0
+
     try:
         resp = client.chat.completions.create(
             model="deepseek-chat",
             messages=build_messages(chat_id),
             temperature=0.9,
-            max_tokens=300,
+            max_tokens=150,
         )
         reply = resp.choices[0].message.content
         add_message(chat_id, "assistant", reply)
         print(f"[艾力回复] {reply}")
 
-        # 模拟打字延迟
-        delay = random.choices(
-            [random.uniform(1, 3), random.uniform(5, 10)],
-            weights=[0.8, 0.2],
-        )[0]
-        await asyncio.sleep(delay)
-        await update.message.reply_text(reply)
+        # 根据消息内容决定回复速度
+        pending = get_history(chat_id)[-n:]
+        pending_user_msgs = [m["content"] for m in pending if m["role"] == "user"]
+        combined = " ".join(pending_user_msgs)
+
+        def reply_delay():
+            total_len = len(combined)
+            has_question = any(c in combined for c in "？?吗呢")
+            has_short = all(len(m) <= 10 for m in pending_user_msgs)
+            if total_len <= 15 and has_short and not has_question:
+                if random.random() < 0.7:
+                    return random.uniform(2, 4)
+            elif total_len <= 50 and not has_question:
+                if random.random() < 0.4:
+                    return random.uniform(3, 6)
+            return random.uniform(12, 18)
+
+        # 35% 概率拆分长回复
+        if random.random() < 0.35 and len(reply) > 8:
+            parts = split_reply(reply)
+            for i, part in enumerate(parts):
+                d = reply_delay() if i == 0 else random.uniform(2, 5)
+                await asyncio.sleep(d)
+                await update.message.reply_text(part)
+        else:
+            await asyncio.sleep(reply_delay())
+            await update.message.reply_text(reply)
 
         # ── 消息计数 & 后台提取记忆 ──
         count = increment_msg_count(chat_id)
@@ -343,13 +376,10 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def main():
-    # 启动时加载记忆
     load_memories()
     if IS_CLOUD:
-        # 云端先尝试从 GitHub 拉取更新版本
         sync_memories_from_github()
 
-    # 构建 app
     if TG_PROXY:
         print(f"使用代理: {TG_PROXY}")
         app = Application.builder().token(TG_TOKEN).proxy(TG_PROXY).build()
