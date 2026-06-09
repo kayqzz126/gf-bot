@@ -23,6 +23,11 @@ IS_CLOUD = bool(PORT and "RENDER_SERVICE_NAME" in os.environ)
 SERVICE_NAME = os.environ.get("RENDER_SERVICE_NAME", "")
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "kayqzz126/gf-bot")
+ALLOWED_USERS = set(
+    int(uid.strip())
+    for uid in os.environ.get("ALLOWED_USERS", "").split(",")
+    if uid.strip()
+)
 
 client = OpenAI(api_key=DEEPSEEK_KEY, base_url="https://api.deepseek.com/v1")
 
@@ -308,8 +313,21 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("重新开始了。刚才说到哪了？")
 
 
+async def myid(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    admin = " (已授权)" if chat_id in ALLOWED_USERS else " (未授权)"
+    await update.message.reply_text(f"你的 chat_id: {chat_id}{admin}")
+
+
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
+
+    # 白名单检查
+    if ALLOWED_USERS and chat_id not in ALLOWED_USERS:
+        print(f"[拦截] 未知用户 chat_id={chat_id}")
+        await update.message.reply_text(f"这是私人 bot，不对公开放。\n你的 ID: {chat_id}")
+        return
+
     user_text = update.message.text.strip()
 
     print(f"[收到消息] chat_id={chat_id}: {user_text}")
@@ -388,6 +406,7 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("reset", reset))
+    app.add_handler(CommandHandler("myid", myid))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
 
     if IS_CLOUD:
