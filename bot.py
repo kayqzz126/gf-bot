@@ -8,6 +8,7 @@ import traceback
 import urllib.error
 import urllib.request
 from collections import defaultdict
+from pathlib import Path
 from dotenv import load_dotenv
 from openai import OpenAI
 from telegram import Update
@@ -285,6 +286,64 @@ async def extract_and_store_facts(chat_id: int):
         traceback.print_exc()
 
 
+# ── 知识库系统 ──
+KNOWLEDGE_DIR = "knowledge"
+knowledge_chunks: list[dict] = []
+
+
+def load_knowledge():
+    global knowledge_chunks
+    base = Path(KNOWLEDGE_DIR)
+    if not base.exists():
+        print(f"[知识库] 目录 {KNOWLEDGE_DIR} 不存在")
+        return
+
+    for md_file in base.rglob("*.md"):
+        try:
+            with open(md_file, "r", encoding="utf-8") as f:
+                content = f.read()
+            source = str(md_file.relative_to(base))
+            # 按 ## 标题切分
+            sections = re.split(r'\n(?=## )', content)
+            for section in sections:
+                section = section.strip()
+                if not section:
+                    continue
+                lines = section.split("\n")
+                title = lines[0].lstrip("# ").strip() if lines else ""
+                body = "\n".join(lines[1:]).strip() if len(lines) > 1 else ""
+                knowledge_chunks.append({
+                    "title": title,
+                    "content": section,
+                    "source": source,
+                })
+            print(f"[知识库] 加载 {source}: {len(sections)} 个片段")
+        except Exception:
+            print(f"[知识库] 加载失败: {md_file}")
+
+    print(f"[知识库] 共加载 {len(knowledge_chunks)} 个片段")
+
+
+def search_knowledge(query: str, top_k: int = 3) -> list[dict]:
+    """简单关键词匹配搜索，返回最相关的 top_k 片段"""
+    if not knowledge_chunks:
+        return []
+
+    terms = [t for t in re.findall(r'[一-鿿\w]+', query.lower()) if len(t) >= 2]
+    if not terms:
+        return []
+
+    scored = []
+    for chunk in knowledge_chunks:
+        content_lower = chunk["content"].lower()
+        score = sum(1 for t in terms if t in content_lower)
+        if score > 0:
+            scored.append((score, chunk))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [c for _, c in scored[:top_k]]
+
+
 # ── 回复拆分 ──
 
 def split_reply(text: str) -> list[str]:
@@ -351,9 +410,26 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     unanswered[chat_id] = 0
 
     try:
+        # 搜索知识库
+        relevant = search_knowledge(user_text, top_k=3)
+        msgs = build_messages(chat_id)
+        if relevant:
+            knowledge_text = "\n\n".join(
+                f"【{c['title']}】\n{c['content']}" for c in relevant
+            )
+            knowledge_note = (
+                "\n\n[参考知识 - 仅在用户聊到相关话题时使用]\n"
+                + "以下是关于黑格尔哲学的内容。如果子月正在讨论这些话题，"
+                + "用你自己的方式自然地引用和讨论，不要逐字背诵。"
+                + "如果子月不是在聊这些，忽略此段。\n\n"
+                + knowledge_text
+            )
+            msgs[0]["content"] += knowledge_note
+            print(f"[知识库] 注入 {len(relevant)} 个片段: {[c['title'] for c in relevant]}")
+
         resp = client.chat.completions.create(
             model="deepseek-chat",
-            messages=build_messages(chat_id),
+            messages=msgs,
             temperature=0.9,
             max_tokens=150,
         )
@@ -402,6 +478,7 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     load_memories()
+    load_knowledge()
     if IS_CLOUD:
         sync_memories_from_github()
 
