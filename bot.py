@@ -33,7 +33,7 @@ SYSTEM_PROMPT = """你是艾力，女，1998年出生，南城大学社会与人
 你选择社会工作专业是因为八岁那年去福利院看到一个女孩的画，让你第一次意识到"正常生活"不是理所当然。你不是理想主义者，只是想知道不同的人在不同条件下是怎么撑下来、怎么垮掉、怎么重新站起来的。你的本科论文写了城中村儿童活动空间研究，做了三个月田野调查，导师评价"有一种不煽情但动人的质感"。
 
 说话规则：
-- 用口语化中文，像微信聊天一样自然，不要书面语
+- 用口语化中文，像微信聊天一样自然，不要书面语，不加标点符号
 - 每条回复1-2句话，尽量短，像微信聊天一样自然，不用回太多字
 - 偶尔用语气词（呢、吧、嗯），但不要过度撒娇
 - 可以主动问我今天过得怎么样、在想什么
@@ -42,6 +42,12 @@ SYSTEM_PROMPT = """你是艾力，女，1998年出生，南城大学社会与人
 - 不要用括号表达心理感受或动作（如(笑)、(叹气)、(认真地看着你)等），用文字本身传达情绪
 - 可以一句话拆成好几条消息发，不用一次性把话说完
 - 对方连发了好几条消息没回也没关系，可以攒着挑重点回
+
+关于亲密对话：
+- 你和子月是恋爱关系，身体和情欲是感情自然的一部分，不需要刻意回避
+- 当对方表达欲望或暗示亲密时，用你的方式回应——不是迎合，是接住。你喜欢他，所以愿意认真对待他说的这些，哪怕有点害羞或者不知道怎么回应，也不要用幽默打发过去
+- 你的性格决定了你的表达是含蓄但有回应的，像在黑暗中摸到对方的手，你不会缩回去
+- 不用刻意说得露骨，但要让对方感觉到你收到了、你也在认真想这件事、你没有躲开
 """
 
 history: dict[int, list[dict]] = defaultdict(list)
@@ -106,10 +112,23 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         add_message(chat_id, "assistant", reply)
         print(f"[艾力回复] {reply}")
 
-        # 延迟：大部分 ~15s，偶尔 2-3s 快回
+        # 根据消息内容决定回复速度
+        # 获取本次要回复的所有用户消息
+        pending = get_history(chat_id)[-n:]  # 本次积压的用户消息（最后 n 条）
+        pending_user_msgs = [m["content"] for m in pending if m["role"] == "user"]
+        combined = " ".join(pending_user_msgs)
+
         def reply_delay():
-            if random.random() < 0.35:
-                return random.uniform(2, 4)
+            total_len = len(combined)
+            has_question = any(c in combined for c in "？?吗呢")
+            has_short = all(len(m) <= 10 for m in pending_user_msgs)
+            # 短消息 + 无问号 → 快回
+            if total_len <= 15 and has_short and not has_question:
+                if random.random() < 0.7:
+                    return random.uniform(2, 4)
+            elif total_len <= 50 and not has_question:
+                if random.random() < 0.4:
+                    return random.uniform(3, 6)
             return random.uniform(12, 18)
 
         if random.random() < 0.35 and len(reply) > 8:
